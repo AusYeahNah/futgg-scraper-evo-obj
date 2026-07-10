@@ -1,0 +1,64 @@
+name: FUTGG Objectives + Evolutions Scraper
+on:
+  workflow_dispatch:
+  schedule:
+    # Twice daily, matching 3:30am / 3:30pm GMT+10 (UTC+10).
+    # GMT+10 has no DST, so this offset is stable year-round.
+    # 3:30 AM GMT+10  -> 17:30 UTC the previous day
+    - cron: '30 17 * * *'
+    # 3:30 PM GMT+10  -> 05:30 UTC the same day
+    - cron: '30 5 * * *'
+
+concurrency:
+  group: scrape-futgg
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90   # each run took ~36 min locally; generous headroom for a slower/blocked run
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Install Xvfb (virtual display for headless=False)
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      # Cache the persistent browser profiles between runs. This won't fully
+      # replicate a real returning-visitor history (new runner = new IP every
+      # time regardless), but it at least keeps cookies/localStorage from one
+      # run to the next rather than starting fully blank every time.
+      - name: Restore browser profile cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            objectives_profile
+            evolutions_profile
+          key: futgg-profiles-${{ github.run_id }}
+          restore-keys: |
+            futgg-profiles-
+
+      - name: Run scraper (under virtual display)
+        env:
+          PA_UPLOAD_URL_BASE: https://AusYeahNah.pythonanywhere.com
+          PA_API_KEY: ${{ secrets.PA_API_KEY }}
+        run: xvfb-run -a python futgg_combined_scraper.py
+
+      - name: Save browser profile cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            objectives_profile
+            evolutions_profile
+          key: futgg-profiles-${{ github.run_id }}
